@@ -1,0 +1,84 @@
+import os
+import numpy as np
+import pandas as pd
+from datetime import datetime
+from collections import defaultdict
+
+# Constants
+DATA_PATH = "./data"
+FILE_NAME = "release_10_23_2020.csv"
+
+# Load Data
+def load_data():
+    df = pd.read_csv(os.path.join(DATA_PATH, FILE_NAME))
+    return df
+
+# Preprocess Data
+def preprocess_data(df):
+    df['server_timestamp'] = pd.to_datetime(df['server_timestamp_epoch_ms'], unit='ms', origin='unix')
+    df.sort_values(by=['session_id_hash', 'server_timestamp'], inplace=True)
+    df.drop('server_timestamp_epoch_ms', axis=1, inplace=True)
+    
+    # Calculate time difference within sessions
+    df['duration_minutes'] = df.groupby('session_id_hash')['server_timestamp'].diff().dt.total_seconds().div(60).fillna(0)
+    
+    # Extract time-based features
+    df['hour'] = df['server_timestamp'].dt.hour.astype(int)
+    df['day_of_month'] = df['server_timestamp'].dt.day
+    df['week_of_month'] = np.ceil(df['day_of_month'] / 7)
+    df['date'] = df['server_timestamp'].dt.date
+    
+    return df
+
+# Analyze Sessions
+def session_analysis(df):
+    session_data = defaultdict(dict)
+    
+    for _, row in df.iterrows():
+        session_id = row['session_id_hash']
+        event_type = row['event_type']
+        session_data[session_id][event_type] = session_data[session_id].get(event_type, 0) + 1
+        
+        product_action = row['product_action']
+        if not pd.isnull(product_action):
+            session_data[session_id][product_action] = session_data[session_id].get(product_action, 0) + 1
+            product_url = row["product_skus_hash"]
+            session_data[session_id].setdefault("seen product url", []).append(product_url)
+    
+    return pd.DataFrame.from_dict(session_data, orient='index')
+
+# Extract Product Insights
+def product_analysis(df):
+    df_product = df.dropna(subset=['product_skus_hash']).groupby(
+        ['session_id_hash', 'product_skus_hash', 'event_type', 'product_action']
+    ).agg(product_event_number=('event_type', 'count'), product_action_number=('product_action', 'count')).reset_index()
+    df_product.set_index('session_id_hash', inplace=True)
+    return df_product
+
+# Generate Pivot Table
+def generate_pivot_table(df):
+    pivot_table = pd.pivot_table(df, index=['session_id_hash', 'product_skus_hash'], 
+                                 columns=['event_type', 'product_action'], 
+                                 aggfunc={'product_action': 'count'}, fill_value=0)
+    pivot_table.columns = ["_".join([str(a) for a in s]) for s in pivot_table.columns.to_list()]
+    pivot_table.reset_index(inplace=True)
+    pivot_table.set_index("session_id_hash", inplace=True)
+    return pivot_table
+
+# Merge Data
+def merge_data(df_session, df_product_stats):
+    df_final = df_session.join(df_product_stats)
+    df_final.dropna(subset=['detail'], inplace=True)
+    df_final['number_of_seen_url'] = df_final['seen product url'].apply(lambda x: len(np.unique(x)))
+    return df_final
+
+if __name__ == "__main__":
+    data = load_data()
+    data = preprocess_data(data)
+    df_session = session_analysis(data)
+    df_product = product_analysis(data)
+    df_product_stats = generate_pivot_table(df_product)
+    df_final = merge_data(df_session, df_product_stats)
+    
+    print("Final Processed Data:")
+    print(df_final.head())
