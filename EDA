@@ -1,0 +1,105 @@
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Constants
+DATA_PATH = "C:/Users/cywu/OneDrive - BDP International/Desktop/Data Analytics/DAAN 570"
+FILE_NAME = "release_10_23_2020.csv"
+
+# Load Data
+def load_data():
+    os.chdir(DATA_PATH)
+    df = pd.read_csv(FILE_NAME)
+    return df
+
+# Handle Missing Values
+def check_missing_values(df):
+    missing_values = df.isnull().sum()
+    print("Missing Values per Column:\n", missing_values)
+    return missing_values
+
+# Convert Timestamps
+def convert_timestamps(df):
+    df['server_timestamp'] = pd.to_datetime(df['server_timestamp_epoch_ms'], unit='ms')
+    df.drop('server_timestamp_epoch_ms', axis=1, inplace=True)
+    return df
+
+# Basic Data Summary
+def data_summary(df):
+    print("Data Info:\n")
+    print(df.info())
+    print("\nData Description:\n")
+    print(df.describe())
+    print("\nUnique Session IDs:", df['session_id_hash'].nunique())
+
+# Univariate Analysis
+def univariate_analysis(df):
+    plt.figure(figsize=(12, 6))
+    sns.countplot(data=df, x='event_type')
+    plt.title('Event Type Distribution')
+    plt.show()
+    
+    plt.figure(figsize=(12, 6))
+    sns.countplot(data=df, x='product_action')
+    plt.title('Product Action Distribution')
+    plt.show()
+
+# Bivariate Analysis
+def bivariate_analysis(df):
+    cross_tab = pd.crosstab(df['event_type'], df['product_action'])
+    plt.figure(figsize=(10, 6))
+    sns.heatmap(cross_tab, annot=True, fmt='d')
+    plt.title('Event Type vs Product Action')
+    plt.show()
+
+# Time-Series Analysis
+def time_series_analysis(df):
+    plt.figure(figsize=(12, 6))
+    df['server_timestamp'].hist(bins=30, color='skyblue', edgecolor='black')
+    plt.title('Distribution of Events Over Time')
+    plt.xlabel('Time')
+    plt.ylabel('Frequency')
+    plt.xticks(rotation=45)
+    plt.show()
+
+    grouped_data = df.groupby([pd.Grouper(key='server_timestamp', freq='D'), 'product_action']).size().unstack(fill_value=0)
+    plt.figure(figsize=(12, 6))
+    grouped_data.plot(kind='line')
+    plt.title('Product Actions Over Time')
+    plt.xlabel('Date')
+    plt.ylabel('Number of Actions')
+    plt.xticks(rotation=45)
+    plt.legend(title='Product Action')
+    plt.show()
+
+# Session Insights
+def session_insights(df):
+    df_sorted = df.sort_values(by=['session_id_hash', 'server_timestamp'])
+    session_durations = df_sorted.groupby('session_id_hash')['server_timestamp'].agg([min, max])
+    session_durations['duration'] = session_durations['max'] - session_durations['min']
+    print("Session Duration Summary:\n", session_durations.describe())
+
+# Feature Engineering
+def feature_engineering(df):
+    df['hour_of_day'] = df['server_timestamp'].dt.hour
+    df['day_of_week'] = df['server_timestamp'].dt.dayofweek
+    total_events_per_session = df.groupby('session_id_hash').size().rename('total_events_per_session')
+    unique_products_per_session = df.groupby('session_id_hash')['product_skus_hash'].nunique().rename('unique_products_per_session')
+    df = df.merge(total_events_per_session, on='session_id_hash')
+    df = df.merge(unique_products_per_session, on='session_id_hash')
+    df = pd.concat([df, pd.get_dummies(df['product_action'])], axis=1)
+    return df
+
+if __name__ == "__main__":
+    data = load_data()
+    check_missing_values(data)
+    data = convert_timestamps(data)
+    data_summary(data)
+    univariate_analysis(data)
+    bivariate_analysis(data)
+    time_series_analysis(data)
+    session_insights(data)
+    data = feature_engineering(data)
+    print("Feature Engineering Completed.")
